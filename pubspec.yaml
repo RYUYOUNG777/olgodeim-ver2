@@ -1,0 +1,70 @@
+name: final_graduation_work
+description: "New Flutter project July 10th."
+publish_to: 'none'
+
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.6.1
+
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # --- 기존 Firebase 및 기타 패키지 (유지) ---
+  firebase_core: ^3.2.0
+  cloud_firestore: ^5.1.0
+  firebase_auth: ^5.1.2
+  firebase_database: ^11.0.3
+  firebase_storage: ^12.1.1
+  google_sign_in: ^6.2.1
+  camera: ^0.10.0+1
+  permission_handler: ^11.3.1
+  cupertino_icons: ^1.0.8
+  path_provider: ^2.0.11
+  webview_flutter: ^4.0.6
+  flutter_blue_plus: ^1.35.0
+  tflite_flutter: ^0.11.0
+  image: ^3.0.2
+  video_player: ^2.5.1
+  table_calendar: ^3.0.8
+  image_picker: ^1.1.2
+  fl_chart: ^0.66.0
+  shared_preferences: ^2.0.15
+  fluttertoast: ^8.2.1
+  flutter_tts: ^4.2.2
+
+  # --- ML Kit (유지) ---
+  google_mlkit_face_detection: ^0.13.1
+  google_mlkit_pose_detection: ^0.14.0
+  google_mlkit_commons: ^0.11.0
+
+  # --- AI 분석을 위해 새로 추가된 패키지 ---
+  google_generative_ai: ^0.4.1
+  flutter_dotenv: ^5.1.0
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - .env
+    - assets/images/
+    - assets/chatbot.html
+    - assets/video/arm/
+    - assets/video/leg/
+    - assets/video/back/
+    - assets/video/cardio/
+    - assets/video/chest/
+    - assets/video/shoulder/
+    - assets/models/pose_classifier_json.tflite
+
+

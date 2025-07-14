@@ -1,0 +1,36 @@
+// 이 파일의 내용은 새 프로젝트 생성 시 기본으로 만들어지는 표준 내용입니다.
+// 여기에 google-services classpath만 추가하면 됩니다.
+buildscript {
+    ext.kotlin_version = '1.9.0'
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // ❗❗❗ 이 줄을 추가하여 Google Services 플러그인을 다운로드합니다. ❗❗❗
+        classpath 'com.google.gms:google-services:4.4.1'
+    }
+}
+
+// 이 아래는 사용자님이 보내주신 기존 구조를 그대로 유지합니다.
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = "../build"
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}
