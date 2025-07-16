@@ -1,15 +1,24 @@
-// lib/screens/camera_page.dart
+// lib/view/screens/camera_page.dart
+
 import 'dart:io';
-import 'dart:math' as math;
-import 'dart:ui';
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path/path.dart' as path;
 
-import '../ml/pose_classifier.dart';
-import 'workout_feedback_page.dart';
+import '../analysis/squat_analyzer.dart';
+import '../analysis/deadlift_analyzer.dart';
+import '../analysis/barbell_curl_analyzer.dart';
+
+// (이하 클래스 선언들은 이전과 동일)
+
+abstract class ExerciseAnalyzer {
+  List<Object> analyze(Pose pose);
+  String getReport();
+}
+
 
 class CameraPage extends StatefulWidget {
   final String muscleGroup;
@@ -33,179 +42,163 @@ class CameraPage extends StatefulWidget {
 
 class _CameraPageState extends State<CameraPage> {
   CameraController? _controller;
+  CameraDescription? _camera;
   bool _initialized = false;
-  int _cameraIndex = 0;
+  int _cameraIndex = 1;
   bool _isFlashVisible = false;
 
   late final PoseDetector _poseDetector;
   List<Pose> _poses = [];
   bool _isDetecting = false;
 
-  late final PoseClassifier _classifier;
-  bool _classifierReady = false;
+  ExerciseAnalyzer? _analyzer;
 
   int _exerciseCount = 0;
-  String _currentFeedback = '모델 초기화 중…';
+  String _currentFeedback = '카메라를 초기화 중입니다…';
   bool _isRecording = false;
-  String _prevLabel = '';
   DateTime? _startTime;
 
   @override
   void initState() {
     super.initState();
     _requestCameraPermission();
-    _poseDetector =
-        PoseDetector(options: PoseDetectorOptions(mode: PoseDetectionMode.stream));
-    _loadClassifier();
+    _poseDetector = PoseDetector(options: PoseDetectorOptions(model: PoseDetectionModel.base, mode: PoseDetectionMode.stream));
+    _setAnalyzer();
   }
 
-  Future<void> _loadClassifier() async {
-    _classifier = PoseClassifier();
-    await _classifier.init();
-    if (!mounted) return;
-    setState(() {
-      _classifierReady = true;
+  void _setAnalyzer() {
+    switch (widget.workoutName) {
+      case '스쿼트':
+        _analyzer = SquatAnalyzer();
+        break;
+      case '데드리프트':
+        _analyzer = DeadliftAnalyzer();
+        break;
+      case '바벨 컬':
+        _analyzer = BarbellCurlAnalyzer();
+        break;
+      default:
+        _analyzer = null;
+        _currentFeedback = '${widget.workoutName}은(는) 현재 자세 분석을 지원하지 않습니다.';
+    }
+    if (_analyzer != null) {
       _currentFeedback = '준비되면 운동을 시작하세요!';
-    });
+    }
   }
 
-  /* ── CAMERA ── */
   Future<void> _requestCameraPermission() async {
-    if ((await Permission.camera.request()).isGranted) _initCamera(_cameraIndex);
+    if (await Permission.camera.request().isGranted) {
+      _initCamera(_cameraIndex);
+    }
   }
 
   Future<void> _initCamera(int index) async {
     await _controller?.dispose();
     final cams = await availableCameras();
-    if (index >= cams.length) return;
-    _controller = CameraController(cams[index], ResolutionPreset.high, enableAudio: false);
+    if (cams.isEmpty) {
+      if(mounted) setState(() => _currentFeedback = '사용 가능한 카메라가 없습니다.');
+      return;
+    }
+    _cameraIndex = index < cams.length ? index : 0;
+    _camera = cams[_cameraIndex];
+
+    _controller = CameraController(
+      _camera!,
+      ResolutionPreset.high,
+      enableAudio: false,
+      // imageFormatGroup을 제거해서 카메라 기본 포맷을 확인합니다.
+    );
     await _controller!.initialize();
+    if (!mounted) return;
     setState(() => _initialized = true);
     _controller!.startImageStream(_onFrame);
   }
 
   void _onFrame(CameraImage img) {
-    if (_isDetecting || !_classifierReady) return;
-    _detectPose(img);
+    if (_analyzer == null || _isDetecting) return;
+    _detectAndAnalyzePose(img);
   }
 
-  Future<void> _detectPose(CameraImage img) async {
+  Future<void> _detectAndAnalyzePose(CameraImage image) async {
+    if (_isDetecting) return;
     _isDetecting = true;
-    try {
-      final input = InputImage.fromBytes(
-        bytes: img.planes[0].bytes,
-        metadata: InputImageMetadata(
-          size: Size(img.width.toDouble(), img.height.toDouble()),
-          rotation: InputImageRotation.rotation270deg,
-          format: InputImageFormat.nv21,
-          bytesPerRow: img.planes[0].bytesPerRow,
-        ),
+
+    // 이 로그가 가장 중요합니다!
+    print("📸 Camera Format Info: group=${image.format.group}, raw=${image.format.raw}");
+
+    // 에러 방지를 위해 ML Kit 처리 로직을 잠시 비활성화
+    /* try {
+      final WriteBuffer allBytes = WriteBuffer();
+      for (final Plane plane in image.planes) {
+          allBytes.putUint8List(plane.bytes);
+      }
+      final bytes = allBytes.done().buffer.asUint8List();
+
+      final imageSize = Size(image.width.toDouble(), image.height.toDouble());
+      final imageRotation = InputImageRotationValue.fromRawValue(_camera!.sensorOrientation);
+      if (imageRotation == null) {
+        _isDetecting = false;
+        return;
+      }
+
+      final inputImageFormat = InputImageFormat.yuv420;
+
+      final inputImageMetadata = InputImageMetadata(
+        size: imageSize,
+        rotation: imageRotation,
+        format: inputImageFormat,
+        bytesPerRow: image.planes[0].bytesPerRow,
       );
 
-      final poses = await _poseDetector.processImage(input);
-      if (poses.isNotEmpty) {
-        final vec = _poseToVector(poses.first, img.width, img.height);
-        final label = _classifier.predict(vec); // 'good' | 'bad'
+      final inputImage = InputImage.fromBytes(
+        bytes: bytes,
+        metadata: inputImageMetadata,
+      );
 
-        setState(() {
-          _poses = poses;
-          _currentFeedback = 'AI: $label';
-          if (_isRecording && _prevLabel == 'bad' && label == 'good') {
-            _exerciseCount++;
-          }
-          _prevLabel = label;
-        });
+      final poses = await _poseDetector.processImage(inputImage);
+
+      if (poses.isNotEmpty && _analyzer != null) {
+        final analysisResult = _analyzer!.analyze(poses.first);
+        final newFeedback = analysisResult[0] as String;
+        final didCount = analysisResult[1] as bool;
+
+        if (mounted) {
+          setState(() {
+            _poses = poses;
+            _currentFeedback = newFeedback;
+            if (_isRecording && didCount) {
+              _exerciseCount++;
+            }
+          });
+        }
       }
-    } catch (_) {}
+    } catch (e) {
+      print("❌ 에러 발생: $e");
+    }
+    */
+
     _isDetecting = false;
   }
 
-  /* ── 107-차원 특징 벡터 ── */
-  List<double> _poseToVector(Pose pose, int w, int h) {
-    final lm = pose.landmarks;
-    final v = <double>[];
-
-    for (final t in PoseLandmarkType.values) {
-      final p = lm[t];
-      if (p != null) {
-        v..add(p.x / w)..add(p.y / h)..add(p.likelihood);
-      } else {
-        v..addAll([0, 0, 0]);
-      }
-    }
-
-    Offset pt(PoseLandmarkType t) {
-      final p = lm[t];
-      return (p == null) ? Offset.zero : Offset(p.x / w, p.y / h);
-    }
-
-    double ang(Offset a, Offset b, Offset c) {
-      if (a == Offset.zero || b == Offset.zero || c == Offset.zero) return 0;
-      final v1 = a - b, v2 = c - b;
-      final cos = (v1.dx * v2.dx + v1.dy * v2.dy) /
-          (v1.distance * v2.distance + 1e-6);
-      return math.acos(cos.clamp(-1, 1)) * 180 / math.pi;
-    }
-
-    final leftElbowAng  = ang(pt(PoseLandmarkType.leftShoulder),
-        pt(PoseLandmarkType.leftElbow),
-        pt(PoseLandmarkType.leftWrist));
-    final rightElbowAng = ang(pt(PoseLandmarkType.rightShoulder),
-        pt(PoseLandmarkType.rightElbow),
-        pt(PoseLandmarkType.rightWrist));
-
-    final leftSEdist  =
-        (pt(PoseLandmarkType.leftShoulder) - pt(PoseLandmarkType.leftElbow)).distance;
-    final rightSEdist =
-        (pt(PoseLandmarkType.rightShoulder) - pt(PoseLandmarkType.rightElbow)).distance;
-
-    final shoulderCtr = (pt(PoseLandmarkType.leftShoulder) +
-        pt(PoseLandmarkType.rightShoulder)) / 2;
-    final hipCtr      = (pt(PoseLandmarkType.leftHip) +
-        pt(PoseLandmarkType.rightHip)) / 2;
-    double spineAngle = 0;
-    if (shoulderCtr != Offset.zero && hipCtr != Offset.zero) {
-      spineAngle = math.atan2(
-          hipCtr.dy - shoulderCtr.dy, hipCtr.dx - shoulderCtr.dx) *
-          180 / math.pi;
-    }
-
-    final leftWrAlign  = ang(pt(PoseLandmarkType.leftWrist),
-        pt(PoseLandmarkType.leftElbow),
-        pt(PoseLandmarkType.leftShoulder));
-    final rightWrAlign = ang(pt(PoseLandmarkType.rightWrist),
-        pt(PoseLandmarkType.rightElbow),
-        pt(PoseLandmarkType.rightShoulder));
-
-    final shoulderDiff =
-    (pt(PoseLandmarkType.leftShoulder).dy -
-        pt(PoseLandmarkType.rightShoulder).dy).abs();
-
-    v.addAll([
-      leftElbowAng, rightElbowAng,
-      leftSEdist,   rightSEdist,
-      spineAngle,   leftWrAlign, rightWrAlign,
-      shoulderDiff,
-    ]);
-
-    return v; // 107 floats
-  }
-
-  /* ── 운동 시작 / 완료 ── */
   void _startWorkout() {
     setState(() {
       _isRecording = true;
       _exerciseCount = 0;
-      _prevLabel = '';
       _startTime = DateTime.now();
       _currentFeedback = '운동을 시작하세요!';
     });
   }
 
-  void _completeWorkout() {
-    if (!_isRecording) return;
-    final dur = DateTime.now().difference(_startTime!);
+  void _completeWorkout() async {
+    if (!_isRecording || _analyzer == null) return;
+
+    final dur = _startTime != null ? DateTime.now().difference(_startTime!) : Duration.zero;
     setState(() => _isRecording = false);
+
+    final summary = _analyzer!.getReport();
+    final gptFeedback = summary;
+
+    if (!mounted) return;
     Navigator.push(
       context,
       CupertinoPageRoute(
@@ -216,21 +209,22 @@ class _CameraPageState extends State<CameraPage> {
           weight: widget.weight,
           workoutData: const [],
           workoutDuration: dur,
+          gptReport: gptFeedback,
         ),
       ),
     );
   }
 
-  /* ── 기타 Helper ── */
   Future<void> _capturePhoto() async {
     if (!(_controller?.value.isInitialized ?? false)) return;
     final img = await _controller!.takePicture();
     final dir = Directory('/storage/emulated/0/DCIM/Camera');
     if (!dir.existsSync()) dir.createSync(recursive: true);
-    await img.saveTo(path.join(dir.path,
-        'captured_${DateTime.now().millisecondsSinceEpoch}.jpg'));
+    await img.saveTo(path.join(dir.path, 'captured_${DateTime.now().millisecondsSinceEpoch}.jpg'));
+    if(!mounted) return;
     setState(() => _isFlashVisible = true);
     await Future.delayed(const Duration(milliseconds: 300));
+    if(!mounted) return;
     setState(() => _isFlashVisible = false);
   }
 
@@ -243,13 +237,12 @@ class _CameraPageState extends State<CameraPage> {
 
   @override
   void dispose() {
+    _controller?.stopImageStream();
     _controller?.dispose();
     _poseDetector.close();
-    _classifier.close();
     super.dispose();
   }
 
-  /* ── UI ── */
   @override
   Widget build(BuildContext context) {
     return CupertinoPageScaffold(
@@ -261,16 +254,15 @@ class _CameraPageState extends State<CameraPage> {
             _buildWorkoutHeader(),
             Expanded(
               child: Stack(
+                fit: StackFit.expand,
                 children: [
                   _buildPreviewWidget(),
                   if (_poses.isNotEmpty)
                     CustomPaint(
                       painter: PosePainter(
                         _poses,
-                        Size(
-                          _controller?.value.previewSize?.height ?? 1,
-                          _controller?.value.previewSize?.width ?? 1,
-                        ),
+                        _controller?.value.previewSize ?? Size.zero,
+                        _camera?.sensorOrientation ?? 90,
                       ),
                     ),
                   _buildFeedbackOverlay(),
@@ -294,7 +286,7 @@ class _CameraPageState extends State<CameraPage> {
   Widget _buildWorkoutHeader() {
     return Container(
       padding: const EdgeInsets.all(12),
-      color: CupertinoColors.systemBackground,
+      color: CupertinoColors.systemBackground.resolveFrom(context),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
@@ -358,23 +350,25 @@ class _CameraPageState extends State<CameraPage> {
   }
 
   Widget _buildPreviewWidget() {
-    if (!_initialized) return const Center(child: CupertinoActivityIndicator());
-    return OrientationBuilder(
-      builder: (_, __) {
-        return LayoutBuilder(
-          builder: (ctx, cons) {
-            return FittedBox(
+    if (!_initialized || _controller == null) return const Center(child: CupertinoActivityIndicator());
+    return LayoutBuilder(
+      builder: (ctx, cons) {
+        final size = cons.biggest;
+        return ClipRect(
+          child: OverflowBox(
+            alignment: Alignment.center,
+            child: FittedBox(
               fit: BoxFit.cover,
               child: SizedBox(
-                width: _controller!.value.previewSize!.height,
-                height: _controller!.value.previewSize!.width,
+                width: size.height / (_controller!.value.aspectRatio),
+                height: size.height,
                 child: GestureDetector(
                   onTapDown: (d) => _onTapFocus(d, cons),
                   child: CameraPreview(_controller!),
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
       },
     );
@@ -383,20 +377,21 @@ class _CameraPageState extends State<CameraPage> {
   Widget _buildBottomControls() {
     return Container(
       padding: const EdgeInsets.all(16),
+      color: CupertinoColors.systemBackground.resolveFrom(context),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           CupertinoButton.filled(
-            child: const Icon(CupertinoIcons.camera),
             onPressed: _capturePhoto,
+            child: const Icon(CupertinoIcons.camera),
           ),
           CupertinoButton.filled(
-            child: Text(_isRecording ? '운동 완료' : '운동 시작'),
             onPressed: _isRecording ? _completeWorkout : _startWorkout,
+            child: Text(_isRecording ? '운동 완료' : '운동 시작'),
           ),
           CupertinoButton(
-            child: const Text('이전 화면'),
             onPressed: () => Navigator.pop(context),
+            child: const Text('이전 화면'),
           ),
         ],
       ),
@@ -404,14 +399,17 @@ class _CameraPageState extends State<CameraPage> {
   }
 }
 
-/* ── PosePainter ── */
 class PosePainter extends CustomPainter {
   final List<Pose> poses;
   final Size imageSize;
-  PosePainter(this.poses, this.imageSize);
+  final int imageRotation;
+
+  PosePainter(this.poses, this.imageSize, this.imageRotation);
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (imageSize.width == 0 || imageSize.height == 0) return;
+
     final line = Paint()
       ..color = CupertinoColors.systemGreen
       ..strokeWidth = 3;
@@ -419,13 +417,24 @@ class PosePainter extends CustomPainter {
       ..color = CupertinoColors.systemRed
       ..style = PaintingStyle.fill;
 
+    final double hRatio, vRatio;
+
+    if (imageRotation == 90 || imageRotation == 270) {
+      hRatio = size.width / imageSize.height;
+      vRatio = size.height / imageSize.width;
+    } else {
+      hRatio = size.width / imageSize.width;
+      vRatio = size.height / imageSize.height;
+    }
+
     for (final pose in poses) {
       pose.landmarks.forEach((t, lm) {
         if (lm.likelihood > 0.5) {
-          canvas.drawCircle(
-              Offset(lm.x * size.width / imageSize.width,
-                  lm.y * size.height / imageSize.height),
-              4, dot);
+          final offset = Offset(
+            lm.x * hRatio,
+            lm.y * vRatio,
+          );
+          canvas.drawCircle(offset, 4, dot);
         }
       });
 
@@ -433,12 +442,9 @@ class PosePainter extends CustomPainter {
         final p1 = pose.landmarks[c[0]];
         final p2 = pose.landmarks[c[1]];
         if (p1 != null && p2 != null && p1.likelihood > 0.5 && p2.likelihood > 0.5) {
-          canvas.drawLine(
-              Offset(p1.x * size.width / imageSize.width,
-                  p1.y * size.height / imageSize.height),
-              Offset(p2.x * size.width / imageSize.width,
-                  p2.y * size.height / imageSize.height),
-              line);
+          final offset1 = Offset(p1.x * hRatio, p1.y * vRatio);
+          final offset2 = Offset(p2.x * hRatio, p2.y * vRatio);
+          canvas.drawLine(offset1, offset2, line);
         }
       }
     }
@@ -461,4 +467,53 @@ class PosePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class WorkoutFeedbackPage extends StatelessWidget {
+  final String workoutName;
+  final int completedReps;
+  final int targetSets;
+  final double? weight;
+  final List<Map<String, dynamic>> workoutData;
+  final Duration workoutDuration;
+  final String? gptReport;
+
+  const WorkoutFeedbackPage({
+    Key? key,
+    required this.workoutName,
+    required this.completedReps,
+    required this.targetSets,
+    this.weight,
+    required this.workoutData,
+    required this.workoutDuration,
+    this.gptReport,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return CupertinoPageScaffold(
+      navigationBar: CupertinoNavigationBar(
+        middle: Text('$workoutName 결과'),
+      ),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('완료 횟수: $completedReps', style: CupertinoTheme.of(context).textTheme.navLargeTitleTextStyle),
+              const SizedBox(height: 20),
+              if(gptReport != null)
+                Text(gptReport!, style: CupertinoTheme.of(context).textTheme.textStyle),
+              const SizedBox(height: 40),
+              CupertinoButton.filled(
+                child: const Text('확인'),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

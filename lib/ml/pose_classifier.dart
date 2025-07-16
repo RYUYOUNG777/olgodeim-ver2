@@ -1,4 +1,4 @@
-// lib/ml/pose_classifier.dart
+/*// lib/ml/pose_classifier.dart
 import 'dart:math' as math;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -33,3 +33,4 @@ class PoseClassifier {
 
   void close() => _i.close();
 }
+*/

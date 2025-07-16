@@ -3,17 +3,17 @@
 import 'package:flutter/cupertino.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:camera/camera.dart';
-import 'package:flutter/material.dart';
+// import 'package:camera/camera.dart'; // camera 패키지는 이 파일에서 직접 사용되지 않으므로 삭제
+import 'package:flutter/material.dart'; // ScaffoldMessenger 때문에 유지
 
 import 'package:final_graduation_work/data/workout_data.dart';
-import '../analysis/squat.dart';
-import '../analysis/barbell-curl.dart';
-import '../analysis/deadlift.dart';
 import 'camera_page.dart'; // CameraPage로 이동하기 위해 import
 
-// 분석 페이지 (분석 파일들은 lib/analysis/ 폴더 내에 위치)
-import 'package:final_graduation_work/analysis/squat.dart';
+// ▼▼▼ 아래의 불필요한 import들을 모두 삭제했습니다 ▼▼▼
+// import '../analysis/squat.dart';
+// import '../analysis/barbell-curl.dart';
+// import '../analysis/deadlift.dart';
+// import 'package:final_graduation_work/analysis/squat.dart';
 
 /// 예시 Bluetooth 매니저
 class BluetoothManager {
@@ -56,7 +56,7 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   void initState() {
     super.initState();
     BluetoothManager.instance.connect().then((_) {
-      setState(() {});
+      if(mounted) setState(() {});
     });
     _searchController.addListener(() {
       setState(() {
@@ -77,9 +77,6 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
     super.dispose();
   }
 
-  // -----------------------------------------------------------------
-  // 🔻 데이터 정렬 및 헬퍼 함수
-  // -----------------------------------------------------------------
   List<String> _sortWorkouts(List<String> workouts) {
     final fixedOrder = ["스쿼트", "데드리프트", "바벨 컬"];
     List<String> bookmarked = [];
@@ -171,7 +168,7 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   }
 
   // -----------------------------------------------------------------
-  // 🔻 UI Builder 메서드들
+  // 🔻 UI Builder 메서드들 (기존과 동일)
   // -----------------------------------------------------------------
   Widget _buildGroupSelector() {
     final groups = workoutData.keys.toList();
@@ -584,78 +581,13 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                   onPressed: () async {
                     if (selectedWorkout == null) return;
 
-                    int repCount =
-                        int.tryParse(_repCountInputController.text) ?? 0;
-                    if (repCount <= 0) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("유효한 목표 횟수를 입력하세요.")),
-                      );
-                      return;
-                    }
+                    // '목표 횟수'는 CameraPage에서 직접 사용하지 않으므로, 이 페이지에서는 제거
+                    // int repCount = int.tryParse(_repCountInputController.text) ?? 0;
 
                     try {
                       await _saveWorkoutLog();
 
-                      // -------------------------------------------------------
-                      // 🔻 기존 3대 운동 전용 분석 페이지 분기 로직 (주석 처리)
-                      /*
-                      if (_isBookmarked(selectedWorkout!)) {
-                        String normalized =
-                            selectedWorkout!.replaceAll(" ", "");
-                        if (normalized == "스쿼트".replaceAll(" ", "")) {
-                          final cameras = await availableCameras();
-                          Navigator.push(
-                            context,
-                            CupertinoPageRoute(
-                              builder: (_) => SquatAnalysisPage(
-                                cameras: cameras,
-                                targetRepCount: repCount,
-                              ),
-                            ),
-                          );
-                        } else if (normalized ==
-                            "데드리프트".replaceAll(" ", "")) {
-                          final cameras = await availableCameras();
-                          Navigator.push(
-                            context,
-                            CupertinoPageRoute(
-                              builder: (_) => DeadliftAnalysisPage(
-                                cameras: cameras,
-                                targetRepCount: repCount,
-                              ),
-                            ),
-                          );
-                        } else if (normalized ==
-                            "바벨 컬".replaceAll(" ", "")) {
-                          final cameras = await availableCameras();
-                          Navigator.push(
-                            context,
-                            CupertinoPageRoute(
-                              builder: (_) => BarbellCurlAnalysisPage(
-                                cameras: cameras,
-                                targetRepCount: repCount,
-                              ),
-                            ),
-                          );
-                        }
-                      } else {
-                        Navigator.push(
-                          context,
-                          CupertinoPageRoute(
-                            builder: (_) => CameraPage(
-                              muscleGroup: selectedGroup ??
-                                  getMuscleGroupForWorkout(selectedWorkout!),
-                              tool: selectedTool ?? '전체',
-                              workoutName: selectedWorkout!,
-                              setCount: setCount,
-                              weight: weight,
-                            ),
-                          ),
-                        );
-                      }
-                      */
-                      // 🔺 기존 로직 끝 (필요 시 주석 해제) 🔺
-                      // -------------------------------------------------------
+                      // ▼▼▼ 삭제: 오래된 분기 로직(주석) ▼▼▼
 
                       // ✅ 현재 동작: 운동 종류와 상관없이 공통 CameraPage 사용
                       Navigator.push(
