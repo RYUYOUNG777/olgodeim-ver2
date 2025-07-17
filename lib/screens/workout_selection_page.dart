@@ -3,33 +3,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-// import 'package:camera/camera.dart'; // camera 패키지는 이 파일에서 직접 사용되지 않으므로 삭제
-import 'package:flutter/material.dart'; // ScaffoldMessenger 때문에 유지
+import 'package:camera/camera.dart';
+import 'package:flutter/material.dart';
 
 import 'package:final_graduation_work/data/workout_data.dart';
 import 'camera_page.dart'; // CameraPage로 이동하기 위해 import
 
-// ▼▼▼ 아래의 불필요한 import들을 모두 삭제했습니다 ▼▼▼
-// import '../analysis/squat.dart';
-// import '../analysis/barbell-curl.dart';
-// import '../analysis/deadlift.dart';
-// import 'package:final_graduation_work/analysis/squat.dart';
-
-/// 예시 Bluetooth 매니저
-class BluetoothManager {
-  BluetoothManager._internal();
-  static final BluetoothManager instance = BluetoothManager._internal();
-  bool isConnected = false;
-
-  Future<void> connect() async {
-    await Future.delayed(const Duration(seconds: 1));
-    isConnected = true;
-  }
-
-  Future<void> sendWeight(double weight) async {
-    // 실제 블루투스 로직
-  }
-}
+// 분석 페이지 (분석 파일들은 lib/analysis/ 폴더 내에 위치)
 
 class WorkoutSelectionPage extends StatefulWidget {
   const WorkoutSelectionPage({Key? key}) : super(key: key);
@@ -40,7 +20,8 @@ class WorkoutSelectionPage extends StatefulWidget {
 
 class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   final TextEditingController _searchController = TextEditingController();
-  final TextEditingController _repCountInputController = TextEditingController();
+  // ✅ [수정] 목표 횟수 컨트롤러 삭제
+  // final TextEditingController _repCountInputController = TextEditingController();
   String _searchQuery = '';
 
   String? selectedGroup;
@@ -50,14 +31,9 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   int setCount = 3;
   double weight = 0;
 
-  bool get isWeightAvailable => true;
-
   @override
   void initState() {
     super.initState();
-    BluetoothManager.instance.connect().then((_) {
-      if(mounted) setState(() {});
-    });
     _searchController.addListener(() {
       setState(() {
         _searchQuery = _searchController.text;
@@ -73,10 +49,14 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    _repCountInputController.dispose();
+    // ✅ [수정] 목표 횟수 컨트롤러의 dispose 삭제
+    // _repCountInputController.dispose();
     super.dispose();
   }
 
+  // -----------------------------------------------------------------
+  // 🔻 데이터 정렬 및 헬퍼 함수
+  // -----------------------------------------------------------------
   List<String> _sortWorkouts(List<String> workouts) {
     final fixedOrder = ["스쿼트", "데드리프트", "바벨 컬"];
     List<String> bookmarked = [];
@@ -168,7 +148,7 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
   }
 
   // -----------------------------------------------------------------
-  // 🔻 UI Builder 메서드들 (기존과 동일)
+  // 🔻 UI Builder 메서드들
   // -----------------------------------------------------------------
   Widget _buildGroupSelector() {
     final groups = workoutData.keys.toList();
@@ -496,7 +476,6 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                 setState(() {
                   if (weight > 0) weight--;
                 });
-                BluetoothManager.instance.sendWeight(weight);
               },
             ),
             Text('${weight.toInt()} kg',
@@ -507,7 +486,6 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                 setState(() {
                   weight++;
                 });
-                BluetoothManager.instance.sendWeight(weight);
               },
             ),
           ],
@@ -516,21 +494,7 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
     );
   }
 
-  Widget _buildRepCountInput() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text('목표 횟수:', style: TextStyle(fontSize: 16)),
-        const SizedBox(height: 8),
-        CupertinoTextField(
-          controller: _repCountInputController,
-          keyboardType: TextInputType.number,
-          placeholder: '예: 10',
-          padding: const EdgeInsets.all(12),
-        ),
-      ],
-    );
-  }
+  // ✅ [수정] 목표 횟수 입력 위젯(_buildRepCountInput) 전체 삭제
 
   // -----------------------------------------------------------------
   // 🔻 build()
@@ -571,8 +535,7 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
               const SizedBox(height: 16),
               if (selectedWorkout != null) ...[
                 _buildSetAndWeightInput(),
-                const SizedBox(height: 16),
-                _buildRepCountInput(),
+                // ✅ [수정] 목표 횟수 위젯 호출 및 여백(SizedBox) 삭제
               ],
               const SizedBox(height: 16),
               if (selectedWorkout != null)
@@ -581,15 +544,10 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                   onPressed: () async {
                     if (selectedWorkout == null) return;
 
-                    // '목표 횟수'는 CameraPage에서 직접 사용하지 않으므로, 이 페이지에서는 제거
-                    // int repCount = int.tryParse(_repCountInputController.text) ?? 0;
-
+                    // ✅ [수정] 목표 횟수(repCount) 관련 로직 전체 삭제
                     try {
                       await _saveWorkoutLog();
 
-                      // ▼▼▼ 삭제: 오래된 분기 로직(주석) ▼▼▼
-
-                      // ✅ 현재 동작: 운동 종류와 상관없이 공통 CameraPage 사용
                       Navigator.push(
                         context,
                         CupertinoPageRoute(
@@ -600,6 +558,7 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                             workoutName: selectedWorkout!,
                             setCount: setCount,
                             weight: weight,
+                            // ✅ [수정] targetReps 파라미터 전달 삭제
                           ),
                         ),
                       );
@@ -608,16 +567,6 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                     }
                   },
                 ),
-              const SizedBox(height: 16),
-              Text(
-                BluetoothManager.instance.isConnected
-                    ? '블루투스 연결됨'
-                    : '블루투스 연결 중...',
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: CupertinoColors.systemGrey,
-                ),
-              ),
             ],
           ),
         ),

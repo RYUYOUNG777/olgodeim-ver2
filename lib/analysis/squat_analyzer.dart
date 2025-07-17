@@ -1,3 +1,4 @@
+// lib/analysis/squat_analyzer.dart
 import 'dart:math' as math;
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import '../screens/camera_page.dart';
@@ -6,7 +7,11 @@ class SquatAnalyzer implements ExerciseAnalyzer {
   String _repState = "up";
   final Map<String, int> _feedbackFrequency = {};
   int _stateCounter = 0;
-  final int _stateThreshold = 4;
+
+  // [수정] 4프레임 -> 2프레임. 더 민감하게 상태를 변경하도록 수정
+  final int _stateThreshold = 2;
+
+  List<String> _lastPostureFeedback = [];
 
   double _getAngle(PoseLandmark first, PoseLandmark mid, PoseLandmark last) {
     final dx1 = first.x - mid.x, dy1 = first.y - mid.y;
@@ -47,46 +52,58 @@ class SquatAnalyzer implements ExerciseAnalyzer {
     final rightShoulder = landmarks[PoseLandmarkType.rightShoulder];
 
     if (leftHip == null || rightHip == null || leftKnee == null || rightKnee == null || leftAnkle == null || rightAnkle == null || leftShoulder == null || rightShoulder == null) {
-      return [feedbackMsg, didCount];
+      return [feedbackMsg, didCount, 180.0];
     }
 
-    final leftKneeAngle = _getAngle(leftHip, leftKnee, leftAnkle);
-    final rightKneeAngle = _getAngle(rightHip, rightKnee, rightAnkle);
-    final avgKneeAngle = (leftKneeAngle + rightKneeAngle) / 2;
+    final avgKneeAngle = (_getAngle(leftHip, leftKnee, leftAnkle) + _getAngle(rightHip, rightKnee, rightAnkle)) / 2;
+    final avgHipAngle = (_getAngle(leftShoulder, leftHip, leftKnee) + _getAngle(rightShoulder, rightHip, rightKnee)) / 2;
 
+    List<String> currentPostureFeedback = [];
     String currentFeedback = "";
-    if (avgKneeAngle > 160) {
-      currentFeedback = "자세를 유지하고 내려가세요.";
-    } else if (avgKneeAngle > 150) {
-      currentFeedback += "더 깊게 내려가세요. ";
+
+    if (avgKneeAngle > 165) {
+      currentFeedback = "자세를 잡고 내려가세요.";
+    } else if (avgKneeAngle > 95 && _repState == "up") {
+      currentPostureFeedback.add("더 깊게 앉으세요.");
     } else if (avgKneeAngle < 60) {
-      currentFeedback += "너무 깊게 앉았어요. ";
+      currentPostureFeedback.add("너무 깊게 앉았습니다.");
     }
 
-    if (currentFeedback.isEmpty) {
-      currentFeedback = "자세가 좋습니다!";
-    }
-    feedbackMsg = currentFeedback;
-
-    if (feedbackMsg.isNotEmpty && feedbackMsg != "자세가 좋습니다!") {
-      _feedbackFrequency.update(feedbackMsg.trim(), (value) => value + 1, ifAbsent: () => 1);
+    if (avgHipAngle < 85) {
+      currentPostureFeedback.add("상체를 너무 숙였습니다.");
     }
 
-    if (avgKneeAngle < 100) {
+    if (avgKneeAngle < 90 && avgHipAngle > 100) {
+      currentPostureFeedback.add("무릎이 너무 앞으로 나옵니다.");
+    }
+
+    if (currentPostureFeedback.isNotEmpty) {
+      feedbackMsg = currentPostureFeedback.join(", ");
+    } else {
+      feedbackMsg = currentFeedback.isEmpty ? "자세가 좋습니다!" : currentFeedback;
+    }
+
+    if (currentPostureFeedback.isNotEmpty) {
+      for (var feedback in currentPostureFeedback) {
+        _feedbackFrequency.update(feedback, (value) => value + 1, ifAbsent: () => 1);
+      }
+    }
+
+    if (avgKneeAngle < 95) {
       if (_repState == "up") {
         _stateCounter++;
         if (_stateCounter >= _stateThreshold) {
           _repState = "down";
+          _lastPostureFeedback = currentPostureFeedback;
           _stateCounter = 0;
         }
       }
-    } else if (avgKneeAngle > 160) {
+    } else if (avgKneeAngle > 165) {
       if (_repState == "down") {
         _stateCounter++;
         if (_stateCounter >= _stateThreshold) {
           _repState = "up";
           didCount = true;
-          feedbackMsg = "완벽합니다!";
           _stateCounter = 0;
         }
       }
@@ -94,6 +111,20 @@ class SquatAnalyzer implements ExerciseAnalyzer {
       _stateCounter = 0;
     }
 
-    return [feedbackMsg, didCount];
+    if (didCount) {
+      if (_lastPostureFeedback.isEmpty) {
+        feedbackMsg = "완벽합니다!";
+      } else {
+        feedbackMsg = _lastPostureFeedback.join(", ");
+      }
+    } else if (currentPostureFeedback.isNotEmpty) {
+      feedbackMsg = currentPostureFeedback.join(", ");
+    } else if (_repState == "down") {
+      feedbackMsg = "좋습니다, 그대로 올라오세요.";
+    } else {
+      feedbackMsg = "자세를 잡고 내려가세요.";
+    }
+
+    return [feedbackMsg, didCount, avgKneeAngle];
   }
 }

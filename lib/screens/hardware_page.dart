@@ -381,6 +381,7 @@ class _HardwarePageState extends State<HardwarePage> {
                           _poses,
                           _controller!.value.previewSize!,
                           _controller!.description.lensDirection == CameraLensDirection.front,
+                          _controller!.description.sensorOrientation, // ✅ 수정: 카메라 센서 방향 (imageRotation) 전달
                         ),
                       ),
                   ],
@@ -490,8 +491,10 @@ class _PosePainter extends CustomPainter {
   final List<Pose> poses;
   final Size absoluteImageSize;
   final bool isFrontCamera;
+  final int imageRotation; // ✅ 추가: 카메라 센서 방향 변수
 
-  _PosePainter(this.poses, this.absoluteImageSize, this.isFrontCamera);
+  // ✅ 생성자 수정: imageRotation 매개변수 추가
+  _PosePainter(this.poses, this.absoluteImageSize, this.isFrontCamera, this.imageRotation);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -506,22 +509,45 @@ class _PosePainter extends CustomPainter {
     if (absoluteImageSize.isEmpty) return;
 
     for (final Pose pose in poses) {
-      // 1. 단일 배율 계산 (비율 왜곡 문제 해결)
-      final double scaleX = size.width / absoluteImageSize.height;
-      final double scaleY = size.height / absoluteImageSize.width;
-      final double scale = math.min(scaleX, scaleY);
+      // ✅ 수정된 배율 및 오프셋 계산 로직 (CameraPage의 PosePainter 로직 활용)
+      final double hRatio, vRatio;
+      if (imageRotation == 90 || imageRotation == 270) {
+        // 카메라 센서가 가로로 캡처하고 화면이 세로일 경우 (좌표 축이 바뀜)
+        hRatio = size.width / absoluteImageSize.height;
+        vRatio = size.height / absoluteImageSize.width;
+      } else {
+        // 카메라 센서 방향과 화면 방향이 일치할 경우 (좌표 축 유지)
+        hRatio = size.width / absoluteImageSize.width;
+        vRatio = size.height / absoluteImageSize.height;
+      }
 
-      // 2. 중앙 정렬을 위한 오프셋 계산 (위치 쏠림 문제 해결)
-      final double offsetX = (size.width - absoluteImageSize.height * scale) / 2;
-      final double offsetY = (size.height - absoluteImageSize.width * scale) / 2;
+      // 중앙 정렬을 위한 오프셋 계산 (스케일링된 이미지 크기 기준)
+      final double scaledImageWidth = (imageRotation == 90 || imageRotation == 270)
+          ? absoluteImageSize.height * hRatio
+          : absoluteImageSize.width * hRatio;
+      final double scaledImageHeight = (imageRotation == 90 || imageRotation == 270)
+          ? absoluteImageSize.width * vRatio
+          : absoluteImageSize.height * vRatio;
+
+      final double offsetX = (size.width - scaledImageWidth) / 2;
+      final double offsetY = (size.height - scaledImageHeight) / 2;
 
       Offset transform(PoseLandmark landmark) {
-        final dx = landmark.y * scale + offsetX;
-        final dy = landmark.x * scale + offsetY;
+        double transformedX, transformedY;
 
-        // 3. 좌우 반전 로직 제거 (거울 모드 문제 해결)
-        // 전면 카메라는 이미 거울처럼 보이므로, 추가적인 반전이 필요 없습니다.
-        return Offset(dx, dy);
+        if (imageRotation == 90 || imageRotation == 270) {
+          // ✅ X, Y 좌표 역할 변경 (회전된 이미지에 맞춰)
+          transformedX = landmark.y * hRatio + offsetX;
+          transformedY = landmark.x * vRatio + offsetY;
+        } else {
+          // ✅ X, Y 좌표 역할 유지 (회전되지 않은 이미지에 맞춰)
+          transformedX = landmark.x * hRatio + offsetX;
+          transformedY = landmark.y * vRatio + offsetY;
+        }
+
+        // 전면 카메라 좌우 반전은 CameraPreview에서 처리한다고 가정.
+        // PosePainter에서 직접 미러링이 필요하다면 여기에 Offset(size.width - transformedX, transformedY) 적용.
+        return Offset(transformedX, transformedY);
       }
 
       pose.landmarks.forEach((_, landmark) {
@@ -560,5 +586,6 @@ class _PosePainter extends CustomPainter {
   bool shouldRepaint(_PosePainter old) =>
       old.poses != poses ||
           old.absoluteImageSize != absoluteImageSize ||
-          old.isFrontCamera != isFrontCamera;
+          old.isFrontCamera != isFrontCamera ||
+          old.imageRotation != imageRotation; // ✅ 수정: imageRotation도 리페인트 조건에 추가
 }

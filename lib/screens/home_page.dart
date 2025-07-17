@@ -5,6 +5,7 @@ import 'workout_selection_page.dart';
 import 'package:final_graduation_work/data/workout_data.dart';
 import 'hardware_page.dart';
 import 'package:fluttertoast/fluttertoast.dart';
+import 'package:final_graduation_work/data/workout_data.dart';
 ///import 'package:motion_recognition_app/screens/routine_content_page.dart';
 
 
