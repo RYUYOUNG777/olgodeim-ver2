@@ -1,3 +1,5 @@
+// lib/screens/camera_page.dart
+
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';

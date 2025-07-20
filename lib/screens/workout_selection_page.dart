@@ -7,7 +7,9 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import 'package:final_graduation_work/data/workout_data.dart';
-import 'camera_page.dart'; // CameraPage로 이동하기 위해 import
+//import 'camera_page.dart'; // CameraPage로 이동하기 위해 import
+
+import 'hardware_page.dart'; // ✅ [수정] CameraPage 대신 HardwarePage를 import
 
 // 분석 페이지 (분석 파일들은 lib/analysis/ 폴더 내에 위치)
 
@@ -538,27 +540,28 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                 // ✅ [수정] 목표 횟수 위젯 호출 및 여백(SizedBox) 삭제
               ],
               const SizedBox(height: 16),
+
+
               if (selectedWorkout != null)
                 CupertinoButton.filled(
-                  child: const Text('운동 추가하기'),
+                  child: const Text('다음 (하드웨어 설정)'), // ✅ [수정] 버튼 텍스트 변경
                   onPressed: () async {
                     if (selectedWorkout == null) return;
 
-                    // ✅ [수정] 목표 횟수(repCount) 관련 로직 전체 삭제
                     try {
                       await _saveWorkoutLog();
 
+                      // ✅ [수정] CameraPage 대신 HardwarePage로 이동하면서 운동 정보를 전달
                       Navigator.push(
                         context,
                         CupertinoPageRoute(
-                          builder: (_) => CameraPage(
+                          builder: (_) => HardwarePage(
                             muscleGroup: selectedGroup ??
                                 getMuscleGroupForWorkout(selectedWorkout!),
                             tool: selectedTool ?? '전체',
                             workoutName: selectedWorkout!,
                             setCount: setCount,
                             weight: weight,
-                            // ✅ [수정] targetReps 파라미터 전달 삭제
                           ),
                         ),
                       );
@@ -567,6 +570,8 @@ class _WorkoutSelectionPageState extends State<WorkoutSelectionPage> {
                     }
                   },
                 ),
+
+
             ],
           ),
         ),

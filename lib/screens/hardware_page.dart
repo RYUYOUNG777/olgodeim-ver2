@@ -1,8 +1,11 @@
+// lib/screens/hardware_page.dart
+
 import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
+import 'package:flutter/material.dart';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/cupertino.dart';
@@ -10,6 +13,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import '../data/bluetooth_manager.dart';
+
+import 'camera_page.dart'; // ✅ [추가] CameraPage로 이동하기 위해 import
+
+
+
 
 // 하드웨어의 동작 상태를 관리하기 위한 Enum 정의
 enum HardwareStatus {
@@ -74,7 +82,21 @@ class PoseSmoother {
 
 // 메인 화면
 class HardwarePage extends StatefulWidget {
-  const HardwarePage({Key? key}) : super(key: key);
+  // ✅ [추가] WorkoutSelectionPage로부터 운동 정보를 받기 위한 변수들 추가
+  final String muscleGroup;
+  final String tool;
+  final String workoutName;
+  final int setCount;
+  final double weight;
+
+  const HardwarePage({
+    Key? key,
+    required this.muscleGroup,
+    required this.tool,
+    required this.workoutName,
+    required this.setCount,
+    required this.weight,
+  }) : super(key: key);
 
   @override
   State<HardwarePage> createState() => _HardwarePageState();
@@ -105,6 +127,7 @@ class _HardwarePageState extends State<HardwarePage> {
   Timer? _manualControlTimer;
   String _statusMessage = '하드웨어 연결을 시작합니다...';
   String? _lastTtsMessage;
+  int _lostPoseFrameCount = 0; // '발목' 대신 '포즈'를 놓친 프레임으로 변경
 
 
   @override
@@ -237,57 +260,66 @@ class _HardwarePageState extends State<HardwarePage> {
 
     final pose = _poses.first;
     final landmarks = pose.landmarks;
-    const double minLikelihood = 0.4;
+    // AI가 60% 이상 확신하는 관절만 인정하도록 신뢰도 기준 상향
+    const double minLikelihood = 0.6;
 
+    // [2] 얼굴, 어깨, 엉덩이, 무릎, 발목의 인식 정보를 모두 가져옵니다.
+    final nose = landmarks[PoseLandmarkType.nose];
     final leftShoulder = landmarks[PoseLandmarkType.leftShoulder];
     final rightShoulder = landmarks[PoseLandmarkType.rightShoulder];
+    final leftHip = landmarks[PoseLandmarkType.leftHip];
+    final rightHip = landmarks[PoseLandmarkType.rightHip];
+    final leftKnee = landmarks[PoseLandmarkType.leftKnee];
+    final rightKnee = landmarks[PoseLandmarkType.rightKnee];
     final leftAnkle = landmarks[PoseLandmarkType.leftAnkle];
     final rightAnkle = landmarks[PoseLandmarkType.rightAnkle];
 
+    // 주요 관절이 "모두" 보여야만 '전신'으로 인정합니다.
+    bool faceVisible = (nose?.likelihood ?? 0) > minLikelihood;
     bool shouldersVisible = (leftShoulder?.likelihood ?? 0) > minLikelihood && (rightShoulder?.likelihood ?? 0) > minLikelihood;
+    bool hipsVisible = (leftHip?.likelihood ?? 0) > minLikelihood && (rightHip?.likelihood ?? 0) > minLikelihood;
+    bool kneesVisible = (leftKnee?.likelihood ?? 0) > minLikelihood && (rightKnee?.likelihood ?? 0) > minLikelihood;
     bool anklesVisible = (leftAnkle?.likelihood ?? 0) > minLikelihood && (rightAnkle?.likelihood ?? 0) > minLikelihood;
+
+    bool fullBodyVisible = faceVisible && shouldersVisible && hipsVisible && kneesVisible && anklesVisible;
+
+    if (fullBodyVisible) {
+      _lostPoseFrameCount = 0;
+    }
 
     switch (_status) {
       case HardwareStatus.searching:
-        _speak('전신을 찾기 위해 올라갑니다.');
-        LinearMotorController.instance.up();
-        if (anklesVisible && shouldersVisible) {
+        if (!fullBodyVisible) {
+          _speak('전신을 찾기 위해 올라갑니다.');
+          LinearMotorController.instance.up();
+        } else {
           LinearMotorController.instance.stop();
           setState(() => _status = HardwareStatus.centering);
-          _speak('전신을 감지했습니다. 중앙으로 조절합니다.');
+          _speak('전신을 감지했습니다. 구도를 조절합니다.');
         }
         break;
 
       case HardwareStatus.centering:
-        if (!shouldersVisible) {
-          _speak('조금 더 올라갑니다.');
-          LinearMotorController.instance.up();
-          return;
-        }
-        if (!anklesVisible) {
-          _speak('너무 높습니다. 내려갑니다.');
-          LinearMotorController.instance.down();
-          return;
-        }
-
-        final leftHip = landmarks[PoseLandmarkType.leftHip];
-        final rightHip = landmarks[PoseLandmarkType.rightHip];
-        if (leftHip == null || rightHip == null || leftHip.likelihood < minLikelihood || rightHip.likelihood < minLikelihood) {
-          _speak('정확한 자세를 위해 정면을 봐주세요.');
-          LinearMotorController.instance.stop();
+        if (!fullBodyVisible) {
+          _lostPoseFrameCount++;
+          if (_lostPoseFrameCount > 10) {
+            setState(() => _status = HardwareStatus.searching);
+            _speak('사용자를 놓쳤습니다. 다시 찾습니다.');
+          }
           return;
         }
 
-        final bodyCenterY = (leftShoulder!.y + rightShoulder!.y + leftAnkle!.y + rightAnkle!.y) / 4;
         final imageHeight = _controller!.value.previewSize!.height;
-        final targetTop = imageHeight * 0.45;
-        final targetBottom = imageHeight * 0.55;
+        final topMostPointY = nose!.y;
+        final bottomMostPointY = math.max(leftAnkle!.y, rightAnkle!.y);
+        final topMargin = imageHeight * 0.10;
+        final bottomMargin = imageHeight * 0.85;
 
-        if (bodyCenterY < targetTop) {
-          _speak('중앙으로 조절합니다.');
+        if (topMostPointY < topMargin) {
+          _speak('구도를 맞추기 위해 내립니다.');
           LinearMotorController.instance.down();
-        } else if (bodyCenterY > targetBottom) {
-          _speak('중앙으로 조절합니다.');
+        } else if (bottomMostPointY > bottomMargin) {
+          _speak('구도를 맞추기 위해 올립니다.');
           LinearMotorController.instance.up();
         } else {
           LinearMotorController.instance.stop();
@@ -296,18 +328,19 @@ class _HardwarePageState extends State<HardwarePage> {
             _countdownValue = 3;
           });
           _startCountdown();
+          _speak('구도가 조절되었습니다. 3초 후 고정합니다.', force: true);
         }
         break;
 
       case HardwareStatus.confirming:
-        final bodyCenterY = (leftShoulder!.y + rightShoulder!.y + leftAnkle!.y + rightAnkle!.y) / 4;
-        final imageHeight = _controller!.value.previewSize!.height;
-        final targetTop = imageHeight * 0.40;
-        final targetBottom = imageHeight * 0.60;
-        if(bodyCenterY < targetTop || bodyCenterY > targetBottom || !shouldersVisible || !anklesVisible){
-          _countdownTimer?.cancel();
-          setState(() => _status = HardwareStatus.centering);
-          _speak('위치가 변경되어 다시 조절합니다.', force: true);
+        if (!fullBodyVisible) {
+          _lostPoseFrameCount++;
+          if (_lostPoseFrameCount > 10) {
+            _countdownTimer?.cancel();
+            setState(() => _status = HardwareStatus.centering);
+            _speak('위치가 변경되어 다시 조절합니다.', force: true);
+          }
+          return;
         }
         break;
 
@@ -316,7 +349,7 @@ class _HardwarePageState extends State<HardwarePage> {
         break;
     }
   }
-
+////
   void _startCountdown() {
     _speak('3초 후 위치를 고정합니다... $_countdownValue', force: true);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -330,7 +363,26 @@ class _HardwarePageState extends State<HardwarePage> {
       } else {
         timer.cancel();
         setState(() => _status = HardwareStatus.locked);
-        _speak('위치 조정이 완료되었습니다.', force: true);
+        // ✅ [수정] 조정 완료 후 CameraPage로 자동 이동
+        _speak('위치 조정이 완료되었습니다. 운동을 시작합니다.', force: true).then((_) {
+          // TTS 안내 후 잠시 대기했다가 페이지 이동
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted) {
+              Navigator.pushReplacement( // 뒤로가기 시 이 페이지로 돌아오지 않도록 pushReplacement 사용
+                context,
+                CupertinoPageRoute(
+                  builder: (_) => CameraPage(
+                    muscleGroup: widget.muscleGroup,
+                    tool: widget.tool,
+                    workoutName: widget.workoutName,
+                    setCount: widget.setCount,
+                    weight: widget.weight,
+                  ),
+                ),
+              );
+            }
+          });
+        });
       }
     });
   }
@@ -370,7 +422,7 @@ class _HardwarePageState extends State<HardwarePage> {
           else
             Center(
               child: AspectRatio(
-                aspectRatio: _controller!.value.aspectRatio,
+                aspectRatio: 1 / _controller!.value.aspectRatio,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -381,13 +433,17 @@ class _HardwarePageState extends State<HardwarePage> {
                           _poses,
                           _controller!.value.previewSize!,
                           _controller!.description.lensDirection == CameraLensDirection.front,
-                          _controller!.description.sensorOrientation, // ✅ 수정: 카메라 센서 방향 (imageRotation) 전달
+                          _controller!.description.sensorOrientation,
                         ),
                       ),
                   ],
                 ),
               ),
             ),
+
+          // ✅ 카운트다운 상태일 때 애니메이션 위젯을 화면에 표시합니다.
+          if (_status == HardwareStatus.confirming) _buildCountdownAnimation(),
+
           if (_isManualMode && _isBleConnected) _buildManualControls(),
           Positioned(
             bottom: MediaQuery.of(context).padding.bottom + 20,
@@ -397,7 +453,8 @@ class _HardwarePageState extends State<HardwarePage> {
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: CupertinoColors.black.withOpacity(0.6), borderRadius: BorderRadius.circular(10)),
               child: Text(
-                _status == HardwareStatus.confirming ? '$_countdownValue' : _statusMessage,
+                // ✅ 여기서 카운트다운 숫자를 보여주지 않도록 수정되었습니다.
+                _statusMessage,
                 style: const TextStyle(color: CupertinoColors.white, fontSize: 16),
                 textAlign: TextAlign.center,
               ),
@@ -407,6 +464,51 @@ class _HardwarePageState extends State<HardwarePage> {
       ),
     );
   }
+
+  // ✅ 여기에 붙여넣으세요. (build 함수 바로 다음에 위치)
+  /// 카운트다운 애니메이션 위젯을 생성하는 함수
+  Widget _buildCountdownAnimation() {
+    return Center(
+      child: Container(
+        width: 120,
+        height: 120,
+        decoration: BoxDecoration(
+          color: CupertinoColors.black.withOpacity(0.7),
+          shape: BoxShape.circle,
+        ),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 1.0, end: 0.0),
+          duration: const Duration(seconds: 3),
+          builder: (context, value, child) {
+            return Stack(
+              fit: StackFit.expand,
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(
+                  value: value,
+                  strokeWidth: 8,
+                  backgroundColor: CupertinoColors.white.withOpacity(0.2),
+                  valueColor: const AlwaysStoppedAnimation<Color>(CupertinoColors.activeGreen),
+                ),
+                Center(
+                  child: Text(
+                    _countdownValue.toString(),
+                    style: const TextStyle(
+                      color: CupertinoColors.white,
+                      fontSize: 50,
+                      fontWeight: FontWeight.bold,
+                      fontFeatures: [ui.FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
 
   Widget _buildManualControls() {
     return Positioned(
@@ -491,9 +593,8 @@ class _PosePainter extends CustomPainter {
   final List<Pose> poses;
   final Size absoluteImageSize;
   final bool isFrontCamera;
-  final int imageRotation; // ✅ 추가: 카메라 센서 방향 변수
+  final int imageRotation;
 
-  // ✅ 생성자 수정: imageRotation 매개변수 추가
   _PosePainter(this.poses, this.absoluteImageSize, this.isFrontCamera, this.imageRotation);
 
   @override
@@ -506,48 +607,30 @@ class _PosePainter extends CustomPainter {
       ..strokeWidth = 2.5
       ..color = CupertinoColors.activeGreen;
 
-    if (absoluteImageSize.isEmpty) return;
+    if (absoluteImageSize.isEmpty || size.isEmpty) return;
 
     for (final Pose pose in poses) {
-      // ✅ 수정된 배율 및 오프셋 계산 로직 (CameraPage의 PosePainter 로직 활용)
-      final double hRatio, vRatio;
-      if (imageRotation == 90 || imageRotation == 270) {
-        // 카메라 센서가 가로로 캡처하고 화면이 세로일 경우 (좌표 축이 바뀜)
-        hRatio = size.width / absoluteImageSize.height;
-        vRatio = size.height / absoluteImageSize.width;
-      } else {
-        // 카메라 센서 방향과 화면 방향이 일치할 경우 (좌표 축 유지)
-        hRatio = size.width / absoluteImageSize.width;
-        vRatio = size.height / absoluteImageSize.height;
-      }
-
-      // 중앙 정렬을 위한 오프셋 계산 (스케일링된 이미지 크기 기준)
-      final double scaledImageWidth = (imageRotation == 90 || imageRotation == 270)
-          ? absoluteImageSize.height * hRatio
-          : absoluteImageSize.width * hRatio;
-      final double scaledImageHeight = (imageRotation == 90 || imageRotation == 270)
-          ? absoluteImageSize.width * vRatio
-          : absoluteImageSize.height * vRatio;
-
-      final double offsetX = (size.width - scaledImageWidth) / 2;
-      final double offsetY = (size.height - scaledImageHeight) / 2;
-
+      // ✅ [핵심 수정] 모든 관절 좌표를 화면에 맞게 변환하는 함수
       Offset transform(PoseLandmark landmark) {
-        double transformedX, transformedY;
+        double dx, dy;
 
+        // 센서 방향에 따라 좌표 변환 방식을 다르게 적용합니다.
         if (imageRotation == 90 || imageRotation == 270) {
-          // ✅ X, Y 좌표 역할 변경 (회전된 이미지에 맞춰)
-          transformedX = landmark.y * hRatio + offsetX;
-          transformedY = landmark.x * vRatio + offsetY;
+          // 센서가 가로 방향일 때 (화면은 세로)
+          dx = landmark.y * (size.width / absoluteImageSize.height);
+          dy = landmark.x * (size.height / absoluteImageSize.width);
         } else {
-          // ✅ X, Y 좌표 역할 유지 (회전되지 않은 이미지에 맞춰)
-          transformedX = landmark.x * hRatio + offsetX;
-          transformedY = landmark.y * vRatio + offsetY;
+          // 센서가 세로 방향일 때 (화면도 세로)
+          dx = landmark.x * (size.width / absoluteImageSize.width);
+          dy = landmark.y * (size.height / absoluteImageSize.height);
         }
 
-        // 전면 카메라 좌우 반전은 CameraPreview에서 처리한다고 가정.
-        // PosePainter에서 직접 미러링이 필요하다면 여기에 Offset(size.width - transformedX, transformedY) 적용.
-        return Offset(transformedX, transformedY);
+        // 전면 카메라인 경우, 거울처럼 보이기 위해 x좌표를 좌우 반전시킵니다.
+        if (isFrontCamera) {
+          dx = size.width - dx;
+        }
+
+        return Offset(dx, dy);
       }
 
       pose.landmarks.forEach((_, landmark) {
@@ -587,5 +670,5 @@ class _PosePainter extends CustomPainter {
       old.poses != poses ||
           old.absoluteImageSize != absoluteImageSize ||
           old.isFrontCamera != isFrontCamera ||
-          old.imageRotation != imageRotation; // ✅ 수정: imageRotation도 리페인트 조건에 추가
+          old.imageRotation != imageRotation;
 }

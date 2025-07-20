@@ -1,12 +1,16 @@
+// lib/screens/home_page
 import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'workout_selection_page.dart';
+import 'package:flutter/material.dart'; // ✅ [추가] Icons.construction을 사용하기 위해 import
 import 'package:final_graduation_work/data/workout_data.dart';
 import 'hardware_page.dart';
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:final_graduation_work/data/workout_data.dart';
 ///import 'package:motion_recognition_app/screens/routine_content_page.dart';
+
+import 'manual_control_page.dart'; // ✅ [추가] 수동 조작 페이지 import
 
 
 /// HomePage: +추가 버튼을 누르면 RoutineDetailPage에서 선택한 운동들을 하나의 루틴으로 추가하고,
@@ -52,7 +56,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 블루투스 켜시겠습니까? 다이얼로그
+/*  /// 블루투스 켜시겠습니까? 다이얼로그
   void _showBluetoothDialog() {
     showCupertinoDialog(
       context: context,
@@ -73,10 +77,11 @@ class _HomePageState extends State<HomePage> {
                 Navigator.of(contextDialog, rootNavigator: true).pop(); // 다이얼로그 닫기
                 Fluttertoast.showToast(msg: '기기 검색 중...', gravity: ToastGravity.BOTTOM);
                 await Future.delayed(const Duration(seconds: 1));
-                Fluttertoast.showToast(msg: '기기 연결 완료!', gravity: ToastGravity.BOTTOM);
-                Navigator.push(
-                  context, // ← 여기서는 기존 HomePage context를 사용
-                  CupertinoPageRoute(builder: (_) => const HardwarePage()),
+                // ✅ [수정] 기기 연결 완료 후 페이지 이동을 제거하고, 안내 메시지를 개선
+                Fluttertoast.showToast(
+                    msg: "기기 연결 완료! '오늘의 운동 시작하기'로 운동을 시작하세요.",
+                    gravity: ToastGravity.BOTTOM,
+                    toastLength: Toast.LENGTH_LONG
                 );
               },
             ),
@@ -84,7 +89,7 @@ class _HomePageState extends State<HomePage> {
         );
       },
     );
-  }
+  }*/
 
 
 
@@ -311,13 +316,20 @@ class _HomePageState extends State<HomePage> {
     return CupertinoPageScaffold(
       navigationBar: CupertinoNavigationBar(
         middle: const Text('나의 운동'),
+        // ✅ [수정] trailing 부분을 아래 코드로 교체합니다.
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,
           child: const Icon(
-            CupertinoIcons.bluetooth,
+            Icons.construction, // 아이콘 변경
             color: CupertinoColors.activeBlue,
           ),
-          onPressed: _showBluetoothDialog,
+          onPressed: () {
+            // 수동 조작 페이지로 바로 이동
+            Navigator.push(
+              context,
+              CupertinoPageRoute(builder: (_) => const ManualControlPage()),
+            );
+          },
         ),
       ),
       child: SafeArea(
